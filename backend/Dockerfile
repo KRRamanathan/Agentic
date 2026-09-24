@@ -16,6 +16,8 @@ COPY --from=build /opt/venv /opt/venv
 COPY main.py real_llm.py structured_output.py react_loop.py tool_orchestrator.py \
      memory_agent.py hitl_approval.py cost_router.py event_automation.py \
      debate_system.py self_eval.py observability.py ./
+COPY src ./src
+COPY tests/fake_llm.py ./tests/fake_llm.py
 
 USER appuser
 EXPOSE 8000

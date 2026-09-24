@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import os
 
-from anthropic import Anthropic, APIError, APIStatusError
+from anthropic import APIError, APIStatusError, Anthropic, AuthenticationError, RateLimitError
 
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
 class LLMUnavailable(RuntimeError):
-    """Raised when the live client cannot be used (missing key or API failure)."""
+    """Raised when the live client cannot be used (missing key)."""
 
 
 class RealLLM:
@@ -20,7 +20,7 @@ class RealLLM:
         model: str | None = None,
         max_tokens: int = 4096,
     ) -> None:
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or ""
+        self.api_key = (api_key if api_key is not None else os.getenv("ANTHROPIC_API_KEY")) or ""
         self.model = model or os.getenv("ANTHROPIC_MODEL") or DEFAULT_MODEL
         self.max_tokens = max_tokens
         self.name = self.model
@@ -40,14 +40,10 @@ class RealLLM:
                 max_tokens=self.max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
+        except (AuthenticationError, RateLimitError, APIError, APIStatusError):
+            raise
         except LLMUnavailable:
             raise
-        except APIStatusError as exc:
-            raise LLMUnavailable(f"Anthropic API error {exc.status_code}: {exc.message}") from exc
-        except APIError as exc:
-            raise LLMUnavailable(f"Anthropic API error: {exc}") from exc
-        except Exception as exc:  # noqa: BLE001
-            raise LLMUnavailable(f"Anthropic request failed: {exc}") from exc
 
         parts: list[str] = []
         for block in message.content:

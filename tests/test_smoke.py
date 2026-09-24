@@ -22,3 +22,12 @@ def test_health_and_observability_do_not_need_api_key():
     assert "total_cost" in body
     assert "avg_latency" in body
     assert "alerts" in body
+
+
+def test_config_reports_llm_mode():
+    client = TestClient(app)
+    cfg = client.get("/config")
+    assert cfg.status_code == 200
+    body = cfg.json()
+    assert body["llm_mode"] in {"fake", "real"}
+    assert "model" in body

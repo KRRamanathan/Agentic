@@ -1,6 +1,78 @@
 "use client";
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useState } from "react";
+
+export function InlineNotice({
+  tone = "info",
+  children,
+  details,
+}: {
+  tone?: "info" | "warn" | "success";
+  children: ReactNode;
+  details?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const tones = {
+    info: "border-stone-200 bg-stone-50 text-stone-700",
+    warn: "border-amber-200 bg-amber-50 text-amber-900",
+    success: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  };
+  return (
+    <div className={`rounded-xl border px-4 py-3 text-sm ${tones[tone]}`}>
+      <p>{children}</p>
+      {details ? (
+        <div className="mt-2">
+          <button
+            type="button"
+            className="text-xs underline underline-offset-2"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "Hide details" : "Details"}
+          </button>
+          {open ? (
+            <pre className="mt-2 overflow-auto font-mono text-xs opacity-80">{details}</pre>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function isUnavailable(
+  value: unknown,
+): value is { status: "unavailable"; message: string; mode?: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    (value as { status: string }).status === "unavailable" &&
+    typeof (value as { message?: unknown }).message === "string"
+  );
+}
+
+export function ResultPane({
+  data,
+  notice,
+  retrying,
+}: {
+  data: unknown;
+  notice?: string;
+  retrying?: boolean;
+}) {
+  if (retrying) {
+    return (
+      <InlineNotice tone="info">Couldn't reach the server. Retrying...</InlineNotice>
+    );
+  }
+  if (notice) {
+    return <InlineNotice tone="info">{notice}</InlineNotice>;
+  }
+  if (isUnavailable(data)) {
+    return <InlineNotice tone="info">{data.message}</InlineNotice>;
+  }
+  return <JsonBlock value={data} />;
+}
 
 export function JsonBlock({ value }: { value: unknown }) {
   if (value === undefined) {

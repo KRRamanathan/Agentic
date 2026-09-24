@@ -12,10 +12,16 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = unknown>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+async function parseResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return { message: "The server returned a non-JSON response." };
+  }
+}
+
+async function once<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
@@ -24,17 +30,18 @@ export async function api<T = unknown>(
     },
     cache: "no-store",
   });
-  const text = await response.text();
-  let parsed: unknown = text;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    parsed = { error: text, type: "NonJSON" };
-  }
+  const parsed = await parseResponse(response);
   if (!response.ok) {
     throw new ApiError(response.status, parsed);
   }
   return parsed as T;
+}
+
+export async function api<T = unknown>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  return once<T>(path, init);
 }
 
 export type ModuleCard = {

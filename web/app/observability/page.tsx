@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { JsonBlock, Spinner } from "@/components/ui";
+import { InlineNotice, JsonBlock, Spinner } from "@/components/ui";
 
 type Report = {
   calls: number;
@@ -14,7 +14,7 @@ type Report = {
 
 export default function ObservabilityPage() {
   const [report, setReport] = useState<Report | null>(null);
-  const [error, setError] = useState<unknown>();
+  const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -24,7 +24,7 @@ export default function ObservabilityPage() {
       setReport(data);
       setError(undefined);
     } catch (err) {
-      setError(err);
+      setError("Couldn't reach the server. Retrying...");
     } finally {
       setLoading(false);
     }
@@ -48,7 +48,7 @@ export default function ObservabilityPage() {
           <Spinner /> Loading report
         </div>
       ) : null}
-      {error ? <JsonBlock value={error} /> : null}
+      {error ? <InlineNotice tone="info">{error}</InlineNotice> : null}
       {report ? (
         <>
           <div className="grid gap-4 sm:grid-cols-3">

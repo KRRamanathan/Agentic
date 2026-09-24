@@ -3,23 +3,45 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
-import { Button, Field, JsonBlock, inputClass } from "@/components/ui";
+import { Button, Field, ResultPane, inputClass } from "@/components/ui";
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function useLiveCall() {
   const [data, setData] = useState<unknown>();
-  const [error, setError] = useState<unknown>();
+  const [notice, setNotice] = useState<string>();
+  const [retrying, setRetrying] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function run<T>(fn: () => Promise<T>) {
     setLoading(true);
-    setError(undefined);
+    setNotice(undefined);
+    setRetrying(false);
     try {
       const result = await fn();
       setData(result);
       return result;
     } catch (err) {
-      const body = err instanceof ApiError ? err.body : { error: String(err) };
-      setError(body);
+      const status = err instanceof ApiError ? err.status : 0;
+      const retryable = !(err instanceof ApiError) || status >= 500;
+      if (retryable) {
+        setRetrying(true);
+        await sleep(2000);
+        try {
+          const result = await fn();
+          setRetrying(false);
+          setData(result);
+          return result;
+        } catch {
+          setRetrying(false);
+          setNotice("Couldn't reach the server. Retrying...");
+          setData(undefined);
+          return undefined;
+        }
+      }
+      setNotice("Couldn't complete that request.");
       setData(undefined);
       return undefined;
     } finally {
@@ -27,7 +49,7 @@ function useLiveCall() {
     }
   }
 
-  return { data, error, loading, run, setData };
+  return { data, notice, retrying, loading, run, setData };
 }
 
 function Frame({
@@ -35,13 +57,15 @@ function Frame({
   hint,
   children,
   data,
-  error,
+  notice,
+  retrying,
 }: {
   title: string;
   hint: string;
   children: ReactNode;
   data: unknown;
-  error: unknown;
+  notice?: string;
+  retrying?: boolean;
 }) {
   return (
     <div className="grid gap-10 lg:grid-cols-2">
@@ -54,7 +78,7 @@ function Frame({
       </div>
       <div className="space-y-3">
         <p className="text-xs uppercase tracking-[0.14em] text-peach-800/60">Live output</p>
-        {error ? <JsonBlock value={error} /> : <JsonBlock value={data} />}
+        <ResultPane data={data} notice={notice} retrying={retrying} />
       </div>
     </div>
   );
@@ -66,7 +90,7 @@ export function StructuredPlayground() {
   const [fields, setFields] = useState("name:str\nage:int");
 
   return (
-    <Frame title="Structured Output" hint="POST /structured-output" data={live.data} error={live.error}>
+    <Frame title="Structured Output" hint="POST /structured-output" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Source text">
         <textarea className={`${inputClass} min-h-28`} value={text} onChange={(e) => setText(e.target.value)} />
       </Field>
@@ -104,7 +128,7 @@ export function ReactPlayground() {
   const live = useLiveCall();
   const [goal, setGoal] = useState("Add 2 and 3, then uppercase the word agentic.");
   return (
-    <Frame title="ReAct Loop" hint="POST /react" data={live.data} error={live.error}>
+    <Frame title="ReAct Loop" hint="POST /react" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Goal">
         <textarea className={`${inputClass} min-h-28`} value={goal} onChange={(e) => setGoal(e.target.value)} />
       </Field>
@@ -135,7 +159,7 @@ export function OrchestratorPlayground() {
       title="Tool Orchestrator"
       hint="POST /orchestrator and /orchestrator/parallel"
       data={live.data}
-      error={live.error}
+      notice={live.notice} retrying={live.retrying}
     >
       <Field label="Capability">
         <input className={inputClass} value={capability} onChange={(e) => setCapability(e.target.value)} />
@@ -195,7 +219,7 @@ export function MemoryPlayground() {
   const [text, setText] = useState("The project deadline is Friday.");
   const [query, setQuery] = useState("deadline");
   return (
-    <Frame title="Memory Agent" hint="POST /memory/turn, /recall, /compress · GET /memory/stats" data={live.data} error={live.error}>
+    <Frame title="Memory Agent" hint="POST /memory/turn, /recall, /compress · GET /memory/stats" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Turn">
         <input className={inputClass} value={text} onChange={(e) => setText(e.target.value)} />
       </Field>
@@ -225,7 +249,7 @@ export function ApprovalPlayground() {
   const [request, setRequest] = useState("Refund order #1842 for $50.");
   const [ticket, setTicket] = useState("");
   return (
-    <Frame title="HITL Approval" hint="POST /approval/handle and /approval/resume" data={live.data} error={live.error}>
+    <Frame title="HITL Approval" hint="POST /approval/handle and /approval/resume" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Request">
         <textarea className={`${inputClass} min-h-24`} value={request} onChange={(e) => setRequest(e.target.value)} />
       </Field>
@@ -280,7 +304,7 @@ export function CostRouterPlayground() {
   const live = useLiveCall();
   const [task, setTask] = useState("Summarize this sentence: agents should stay cheap.");
   return (
-    <Frame title="Cost Router" hint="POST /cost-router · GET /cost-router/analytics" data={live.data} error={live.error}>
+    <Frame title="Cost Router" hint="POST /cost-router · GET /cost-router/analytics" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Task">
         <textarea className={`${inputClass} min-h-28`} value={task} onChange={(e) => setTask(e.target.value)} />
       </Field>
@@ -302,7 +326,7 @@ export function EventsPlayground() {
   const [type, setType] = useState("echo");
   const [payload, setPayload] = useState('{"hello":true}');
   return (
-    <Frame title="Event Automation" hint="POST /events/process and /events/replay · types: echo, ping, fail_once" data={live.data} error={live.error}>
+    <Frame title="Event Automation" hint="POST /events/process and /events/replay · types: echo, ping, fail_once" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Event id">
         <input className={inputClass} value={id} onChange={(e) => setId(e.target.value)} />
       </Field>
@@ -338,7 +362,7 @@ export function DebatePlayground() {
   const live = useLiveCall();
   const [question, setQuestion] = useState("Should we use a cheaper model for simple extraction?");
   return (
-    <Frame title="Debate System" hint="POST /debate" data={live.data} error={live.error}>
+    <Frame title="Debate System" hint="POST /debate" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Question">
         <textarea className={`${inputClass} min-h-28`} value={question} onChange={(e) => setQuestion(e.target.value)} />
       </Field>
@@ -354,7 +378,7 @@ export function SelfEvalPlayground() {
   const [task, setTask] = useState("Write a one-sentence definition of idempotency.");
   const [criteria, setCriteria] = useState("Accurate, concise, no jargon pile-up.");
   return (
-    <Frame title="Self-Eval" hint="POST /self-eval" data={live.data} error={live.error}>
+    <Frame title="Self-Eval" hint="POST /self-eval" data={live.data} notice={live.notice} retrying={live.retrying}>
       <Field label="Task">
         <textarea className={`${inputClass} min-h-24`} value={task} onChange={(e) => setTask(e.target.value)} />
       </Field>

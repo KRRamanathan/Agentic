@@ -23,8 +23,16 @@ from hitl_approval import ApprovalAgent, UnknownTicket
 from memory_agent import Memory
 from observability import InstrumentedLLM, Tracer
 from react_loop import ReActAgent
-from real_llm import LLMUnavailable, RealLLM
+from real_llm import LLMUnavailable
 from self_eval import SelfEvalAgent
+from src.llm_factory import (
+    AUTH_MESSAGE,
+    RATE_MESSAGE,
+    AnthropicAPIError,
+    AnthropicAuthenticationError,
+    AnthropicRateLimitError,
+    get_llm,
+)
 from structured_output import ExtractionError, StructuredAgent
 from tool_orchestrator import Orchestrator, PermissionDenied, Tool
 
@@ -40,11 +48,18 @@ TYPE_MAP = {"str": str, "int": int, "float": float, "bool": bool}
 # Shared process state
 # ---------------------------------------------------------------------------
 
+class _DelegatingLLM:
+    """Routes complete() through get_llm() so mode is chosen at call time."""
+
+    def complete(self, prompt: str) -> str:
+        client, _mode = get_llm()
+        return client.complete(prompt)
+
+
 class AppRuntime:
     def __init__(self) -> None:
         self.tracer = Tracer()
-        self.raw_llm = RealLLM()
-        self.llm = InstrumentedLLM(self.raw_llm, self.tracer, cost_per_call=0.01)
+        self.llm = InstrumentedLLM(_DelegatingLLM(), self.tracer, cost_per_call=0.01)
         self.memory = Memory(self.llm)
         self.approval = ApprovalAgent(self.llm)
         self.orchestrator = Orchestrator()
@@ -267,9 +282,47 @@ def error_payload(exc: Exception, status_code: int) -> JSONResponse:
     )
 
 
+def _unavailable(message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=200,
+        content={"status": "unavailable", "mode": "real", "message": message},
+    )
+
+
+def llm_guard(work):
+    """Run an LLM-backed body; provider errors become HTTP 200 + structured JSON."""
+    try:
+        return work()
+    except AnthropicAuthenticationError:
+        return _unavailable(AUTH_MESSAGE)
+    except AnthropicRateLimitError:
+        return _unavailable(RATE_MESSAGE)
+    except AnthropicAPIError as exc:
+        msg = getattr(exc, "message", None) or str(exc)
+        return _unavailable(f"The model provider returned an error: {msg}")
+    except LLMUnavailable:
+        return _unavailable(AUTH_MESSAGE)
+
+
 @app.exception_handler(LLMUnavailable)
 async def llm_unavailable_handler(_request: Request, exc: LLMUnavailable):
-    return error_payload(exc, 503)
+    return _unavailable(AUTH_MESSAGE)
+
+
+@app.exception_handler(AnthropicAuthenticationError)
+async def anthropic_auth_handler(_request: Request, exc: AnthropicAuthenticationError):
+    return _unavailable(AUTH_MESSAGE)
+
+
+@app.exception_handler(AnthropicRateLimitError)
+async def anthropic_rate_handler(_request: Request, exc: AnthropicRateLimitError):
+    return _unavailable(RATE_MESSAGE)
+
+
+@app.exception_handler(AnthropicAPIError)
+async def anthropic_api_handler(_request: Request, exc: AnthropicAPIError):
+    msg = getattr(exc, "message", None) or str(exc)
+    return _unavailable(f"The model provider returned an error: {msg}")
 
 
 @app.exception_handler(ExtractionError)
@@ -337,11 +390,21 @@ async def generic_handler(_request: Request, exc: Exception):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    client, mode = get_llm()
+    model = "fake-llm" if mode == "fake" else getattr(client, "name", "claude-sonnet-4-6")
     return {
         "ok": True,
-        "model": runtime.raw_llm.model,
-        "api_key_configured": bool(runtime.raw_llm.api_key),
+        "model": model,
+        "api_key_configured": mode == "real",
+        "llm_mode": mode,
     }
+
+
+@app.get("/config")
+def config() -> dict[str, str]:
+    client, mode = get_llm()
+    model = "fake-llm" if mode == "fake" else getattr(client, "name", "claude-sonnet-4-6")
+    return {"llm_mode": mode, "model": model}
 
 
 @app.get("/docs-info")
@@ -357,29 +420,35 @@ def _dynamic_schema(fields: list[FieldSpec]):
     return create_model("Extracted", **defs)
 
 
-@app.post("/structured-output", response_model=StructuredResponse)
-def structured_output(body: StructuredRequest) -> StructuredResponse:
-    schema = _dynamic_schema(body.fields)
-    agent = StructuredAgent(runtime.llm, schema, max_retries=body.max_retries)
-    result = agent.extract(body.text)
-    return StructuredResponse(data=result.model_dump(), failures=agent.failures)
+@app.post("/structured-output", response_model=None)
+def structured_output(body: StructuredRequest):
+    def work():
+        schema = _dynamic_schema(body.fields)
+        agent = StructuredAgent(runtime.llm, schema, max_retries=body.max_retries)
+        result = agent.extract(body.text)
+        return StructuredResponse(data=result.model_dump(), failures=agent.failures)
+
+    return llm_guard(work)
 
 
-@app.post("/react", response_model=ReactResponse)
-def react(body: ReactRequest) -> ReactResponse:
-    available = _builtin_react_tools()
-    unknown = [name for name in body.tools if name not in available]
-    if unknown:
-        raise HTTPException(status_code=400, detail={"error": f"unknown tools: {unknown}", "type": "ValueError"})
-    tools = {name: available[name] for name in body.tools}
-    agent = ReActAgent(runtime.llm, tools, max_iterations=body.max_iterations)
-    result = agent.run(body.goal)
-    return ReactResponse(
-        status=result["status"],
-        answer=result["answer"],
-        iterations=result["iterations"],
-        trace=agent.trace,
-    )
+@app.post("/react", response_model=None)
+def react(body: ReactRequest):
+    def work():
+        available = _builtin_react_tools()
+        unknown = [name for name in body.tools if name not in available]
+        if unknown:
+            raise HTTPException(status_code=400, detail={"error": f"unknown tools: {unknown}", "type": "ValueError"})
+        tools = {name: available[name] for name in body.tools}
+        agent = ReActAgent(runtime.llm, tools, max_iterations=body.max_iterations)
+        result = agent.run(body.goal)
+        return ReactResponse(
+            status=result["status"],
+            answer=result["answer"],
+            iterations=result["iterations"],
+            trace=agent.trace,
+        )
+
+    return llm_guard(work)
 
 
 @app.post("/orchestrator")
@@ -453,9 +522,12 @@ def memory_recall(body: MemoryRecallRequest) -> dict[str, Any]:
 
 
 @app.post("/memory/compress")
-def memory_compress() -> dict[str, Any]:
-    runtime.memory.compress()
-    return {"long_term": runtime.memory.long_term}
+def memory_compress():
+    def work():
+        runtime.memory.compress()
+        return {"long_term": runtime.memory.long_term}
+
+    return llm_guard(work)
 
 
 @app.get("/memory/stats", response_model=MemoryStatsResponse)
@@ -470,13 +542,16 @@ def memory_stats() -> MemoryStatsResponse:
 
 
 @app.post("/approval/handle")
-def approval_handle(body: ApprovalHandleRequest) -> dict[str, Any]:
-    prompt = (
-        "Decide on this user request. Return JSON only with keys "
-        'answer (string), confidence (0-1 float), action (string or null).\n'
-        f"Request: {body.request}"
-    )
-    return runtime.approval.handle(prompt)
+def approval_handle(body: ApprovalHandleRequest):
+    def work():
+        prompt = (
+            "Decide on this user request. Return JSON only with keys "
+            'answer (string), confidence (0-1 float), action (string or null).\n'
+            f"Request: {body.request}"
+        )
+        return runtime.approval.handle(prompt)
+
+    return llm_guard(work)
 
 
 @app.post("/approval/resume")
@@ -487,15 +562,18 @@ def approval_resume(body: ApprovalResumeRequest) -> dict[str, Any]:
 
 
 @app.post("/cost-router")
-def cost_router_run(body: CostRouterRequest) -> dict[str, Any]:
-    prompt = (
-        "Complete the task. Return JSON only: "
-        '{"answer": "...", "confidence": 0.0-1.0}\n'
-        f"Task: {body.task}"
-    )
-    result = runtime.router.run_task(prompt)
-    result["analytics"] = runtime.router.analytics()
-    return result
+def cost_router_run(body: CostRouterRequest):
+    def work():
+        prompt = (
+            "Complete the task. Return JSON only: "
+            '{"answer": "...", "confidence": 0.0-1.0}\n'
+            f"Task: {body.task}"
+        )
+        result = runtime.router.run_task(prompt)
+        result["analytics"] = runtime.router.analytics()
+        return result
+
+    return llm_guard(work)
 
 
 @app.get("/cost-router/analytics")
@@ -519,25 +597,31 @@ def events_replay() -> dict[str, Any]:
 
 
 @app.post("/debate")
-def debate(body: DebateRequest) -> dict[str, Any]:
-    proposers = [runtime.llm] * body.n_proposers
-    system = Debate(proposers=proposers, critic=runtime.llm, aggregator=runtime.llm)
-    result = system.run(body.question)
-    result["history"] = None
-    return result
+def debate(body: DebateRequest):
+    def work():
+        proposers = [runtime.llm] * body.n_proposers
+        system = Debate(proposers=proposers, critic=runtime.llm, aggregator=runtime.llm)
+        result = system.run(body.question)
+        result["history"] = None
+        return result
+
+    return llm_guard(work)
 
 
 @app.post("/self-eval")
-def self_eval(body: SelfEvalRequest) -> dict[str, Any]:
-    agent = SelfEvalAgent(
-        worker=runtime.llm,
-        judge=runtime.llm,
-        pass_threshold=body.pass_threshold,
-        max_attempts=body.max_attempts,
-    )
-    result = agent.run(body.task, body.criteria)
-    result["history"] = agent.history
-    return result
+def self_eval(body: SelfEvalRequest):
+    def work():
+        agent = SelfEvalAgent(
+            worker=runtime.llm,
+            judge=runtime.llm,
+            pass_threshold=body.pass_threshold,
+            max_attempts=body.max_attempts,
+        )
+        result = agent.run(body.task, body.criteria)
+        result["history"] = agent.history
+        return result
+
+    return llm_guard(work)
 
 
 @app.get("/observability/report")

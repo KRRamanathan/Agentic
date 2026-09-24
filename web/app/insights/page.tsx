@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Button, Field, JsonBlock, inputClass } from "@/components/ui";
+import { Button, Field, InlineNotice, JsonBlock, inputClass } from "@/components/ui";
 
 type Analytics = {
   total_cost: number;
@@ -31,7 +31,7 @@ export default function InsightsPage() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [memory, setMemory] = useState<MemoryStats | null>(null);
   const [bench, setBench] = useState<Benchmark | null>(null);
-  const [error, setError] = useState<unknown>();
+  const [error, setError] = useState<string>();
   const [n, setN] = useState(5);
   const [seconds, setSeconds] = useState(0.2);
   const [running, setRunning] = useState(false);
@@ -46,7 +46,7 @@ export default function InsightsPage() {
       setMemory(m);
       setError(undefined);
     } catch (err) {
-      setError(err);
+      setError("Couldn't reach the server. Retrying...");
     }
   }, []);
 
@@ -64,7 +64,7 @@ export default function InsightsPage() {
       setBench(result);
       setError(undefined);
     } catch (err) {
-      setError(err);
+      setError("Couldn't reach the server. Retrying...");
     } finally {
       setRunning(false);
     }
@@ -84,7 +84,7 @@ export default function InsightsPage() {
         </p>
       </div>
 
-      {error ? <JsonBlock value={error} /> : null}
+      {error ? <InlineNotice tone="info">{error}</InlineNotice> : null}
 
       <section className="space-y-5">
         <h2 className="text-lg">Cost router</h2>
