@@ -79,8 +79,21 @@ def _round(value: Any) -> Any:
 
 class ExtractSchema(BaseModel):
     title: str = ""
+    invoice_number: str = ""
     total: float | None = None
+    status: str = ""
     summary: str = Field(default="")
+
+
+def _fill_goal_args(action: str, args: dict, goal: str) -> dict:
+    filled = dict(args)
+    if action == "debate":
+        filled["question"] = goal
+    elif action == "extract":
+        filled["text"] = goal
+    elif action == "self_eval":
+        filled["task"] = goal
+    return filled
 
 
 class AgentPipeline:
@@ -403,6 +416,7 @@ class AgentPipeline:
             elif not isinstance(args, dict):
                 obs = "ERROR: 'args' must be a JSON object"
             else:
+                args = _fill_goal_args(action, args, goal)
                 try:
                     result = self.tools[action](**args)
                     tool_used = True
@@ -509,6 +523,14 @@ class AgentPipeline:
             "(write, plan, design, compare, extract, analyze), you MUST call a "
             "tool on the first iteration.\n"
             f"{must_tool}\n\n"
+            "For the question, text, and task arguments, copy the user's goal "
+            "verbatim. Do not paraphrase, shorten, or summarize. Include every word.\n"
+            "When you decide to finish, your 'final' field MUST synthesize the "
+            "actual content from the tool observations you have received. Do not "
+            "output a generic sentence. Do not say 'the tool result is enough.' "
+            "Your final answer must contain the substance of what the tools "
+            "returned — names, values, arguments, or conclusions the tools "
+            "produced.\n\n"
             f"Trace so far:\n{trace_text}\n\n"
             "Reply with JSON only.\n"
             '  • To call a tool: {"thought": "...", "action": "<tool>", "args": {...}}\n'

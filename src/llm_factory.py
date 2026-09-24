@@ -116,11 +116,28 @@ def _scripted_complete(prompt: str) -> str:
             if line.lower().startswith("goal:"):
                 goal = line.split(":", 1)[1].strip()
                 break
-        tail = prompt.split("Trace so far:", 1)[-1].lower()
-        if re.search(r"action:\s*(extract|debate|self_eval)", tail):
+        tail = prompt.split("Trace so far:", 1)[-1]
+        tail = tail.split("Reply with JSON only", 1)[0]
+        if re.search(r"action:\s*(extract|debate|self_eval)", tail, flags=re.I):
+            parsed = None
+            brace = tail.find("{")
+            if brace >= 0:
+                try:
+                    parsed, _ = json.JSONDecoder().raw_decode(tail[brace:])
+                except json.JSONDecodeError:
+                    parsed = None
+            if isinstance(parsed, dict):
+                final = (
+                    parsed.get("output")
+                    or parsed.get("answer")
+                    or json.dumps(parsed)
+                )
+            else:
+                match = re.search(r"Observation:\s*(.*)$", tail, flags=re.S | re.I)
+                final = match.group(1).strip() if match else tail.strip()
             return json.dumps({
-                "thought": "The tool result is enough to finish.",
-                "final": "Scripted ReAct final answer.",
+                "thought": "Synthesizing the tool observations into a final answer.",
+                "final": str(final),
             })
         g = goal.lower()
         words = [w for w in goal.replace(",", " ").split() if w]
