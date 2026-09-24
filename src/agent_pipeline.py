@@ -16,18 +16,21 @@ from src.llm_factory import (
     AnthropicAPIError,
     AnthropicAuthenticationError,
     AnthropicRateLimitError,
+    GeminiAPIError,
+    GeminiAuthError,
+    GeminiRateLimitError,
     get_llm,
 )
 from structured_output import StructuredAgent
 
 
 def _provider_event(stage: str, exc: BaseException) -> dict:
-    if isinstance(exc, AnthropicAuthenticationError):
+    if isinstance(exc, (AnthropicAuthenticationError, GeminiAuthError)):
         return {"stage": stage, "status": "unavailable", "message": AUTH_MESSAGE}
-    if isinstance(exc, AnthropicRateLimitError):
+    if isinstance(exc, (AnthropicRateLimitError, GeminiRateLimitError)):
         return {"stage": stage, "status": "unavailable", "message": RATE_MESSAGE}
-    if isinstance(exc, AnthropicAPIError):
-        msg = getattr(exc, "message", None) or "provider error"
+    if isinstance(exc, (AnthropicAPIError, GeminiAPIError)):
+        msg = getattr(exc, "message", None) or str(exc)
         if "x-api-key" in str(msg).lower() or "api key" in str(msg).lower() or "authentication" in str(msg).lower():
             return {"stage": stage, "status": "unavailable", "message": AUTH_MESSAGE}
         return {"stage": stage, "status": "unavailable", "message": f"The model provider returned an error: {msg}"}
@@ -59,12 +62,7 @@ def _display_model(router_name: str) -> str:
     client, mode = get_llm()
     if mode == "fake":
         return "fake-llm"
-    return (
-        os.getenv("ANTHROPIC_MODEL")
-        or getattr(client, "model", None)
-        or getattr(client, "name", None)
-        or "claude-sonnet-4-6"
-    )
+    return getattr(client, "name", None) or os.getenv("GEMINI_MODEL") or "gemini-3.6-flash"
 
 
 def _round(value: Any) -> Any:

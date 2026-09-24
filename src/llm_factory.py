@@ -15,6 +15,7 @@ from anthropic import AuthenticationError as AnthropicAuthenticationError
 from anthropic import RateLimitError as AnthropicRateLimitError
 
 from real_llm import RealLLM
+from src.gemini_llm import GeminiAPIError, GeminiAuthError, GeminiLLM, GeminiRateLimitError
 
 _ROOT = Path(__file__).resolve().parents[1]
 _TESTS = _ROOT / "tests"
@@ -208,12 +209,20 @@ class _DemoFakeLLM(FakeLLM):
 @lru_cache(maxsize=1)
 def get_llm() -> tuple[Any, str]:
     """Return (client, mode). mode is "fake" or "real"."""
-    key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    key = (
+        os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or os.getenv("ANTHROPIC_API_KEY")
+        or ""
+    ).strip()
     if key in _PLACEHOLDERS or key.lower().startswith("sk-ant-xxx"):
-        logger.info("LLM mode: fake (no valid ANTHROPIC_API_KEY set)")
+        logger.info("LLM mode: fake (no valid API key set)")
         return _DemoFakeLLM(), "fake"
-    logger.info("LLM mode: real")
-    return RealLLM(key), "real"
+    if key.startswith("sk-ant-"):
+        logger.info("LLM mode: real (anthropic)")
+        return RealLLM(key), "real"
+    logger.info("LLM mode: real (gemini)")
+    return GeminiLLM(key), "real"
 
 
 def reload_llm() -> None:
@@ -226,6 +235,9 @@ __all__ = [
     "AnthropicAPIError",
     "AnthropicAuthenticationError",
     "AnthropicRateLimitError",
+    "GeminiAPIError",
+    "GeminiAuthError",
+    "GeminiRateLimitError",
     "AUTH_MESSAGE",
     "RATE_MESSAGE",
 ]

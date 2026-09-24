@@ -47,7 +47,7 @@ steps:
       - --memory=1Gi
       - --cpu=1
       - --set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest
-      - --set-env-vars=ANTHROPIC_MODEL=claude-sonnet-4-6
+      - --set-env-vars=ANTHROPIC_MODEL=claude-sonnet-4-6,GEMINI_MODEL=gemini-3.6-flash
 
   - id: build-agent-ui
     name: gcr.io/cloud-builders/docker

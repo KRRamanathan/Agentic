@@ -32,6 +32,9 @@ from src.llm_factory import (
     AnthropicAPIError,
     AnthropicAuthenticationError,
     AnthropicRateLimitError,
+    GeminiAPIError,
+    GeminiAuthError,
+    GeminiRateLimitError,
     get_llm,
 )
 from structured_output import ExtractionError, StructuredAgent
@@ -309,9 +312,16 @@ def llm_guard(work):
         return work()
     except AnthropicAuthenticationError:
         return _unavailable(AUTH_MESSAGE)
+    except GeminiAuthError:
+        return _unavailable(AUTH_MESSAGE)
     except AnthropicRateLimitError:
         return _unavailable(RATE_MESSAGE)
+    except GeminiRateLimitError:
+        return _unavailable(RATE_MESSAGE)
     except AnthropicAPIError as exc:
+        msg = getattr(exc, "message", None) or str(exc)
+        return _unavailable(f"The model provider returned an error: {msg}")
+    except GeminiAPIError as exc:
         msg = getattr(exc, "message", None) or str(exc)
         return _unavailable(f"The model provider returned an error: {msg}")
     except LLMUnavailable:
@@ -655,9 +665,20 @@ def _agent_sse_events(iterator):
             yield _sse(ev)
     except AnthropicAuthenticationError:
         yield _sse({"stage": "provider", "status": "unavailable", "message": AUTH_MESSAGE})
+    except GeminiAuthError:
+        yield _sse({"stage": "provider", "status": "unavailable", "message": AUTH_MESSAGE})
     except AnthropicRateLimitError:
         yield _sse({"stage": "provider", "status": "unavailable", "message": RATE_MESSAGE})
+    except GeminiRateLimitError:
+        yield _sse({"stage": "provider", "status": "unavailable", "message": RATE_MESSAGE})
     except AnthropicAPIError as exc:
+        msg = getattr(exc, "message", None) or str(exc)
+        yield _sse({
+            "stage": "provider",
+            "status": "unavailable",
+            "message": f"The model provider returned an error: {msg}",
+        })
+    except GeminiAPIError as exc:
         msg = getattr(exc, "message", None) or str(exc)
         yield _sse({
             "stage": "provider",
@@ -707,10 +728,5 @@ async def agent_config():
     if mode == "fake":
         model = "fake-llm"
     else:
-        model = (
-            os.getenv("ANTHROPIC_MODEL")
-            or getattr(client, "model", None)
-            or getattr(client, "name", None)
-            or "claude-sonnet-4-6"
-        )
+        model = getattr(client, "name", None) or os.getenv("GEMINI_MODEL") or "gemini-3.6-flash"
     return {"llm_mode": mode, "model": model}
