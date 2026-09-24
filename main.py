@@ -233,6 +233,13 @@ class DebateRequest(BaseModel):
     n_proposers: int = Field(default=3, ge=1, le=5)
 
 
+class SelfEvalRequest(BaseModel):
+    task: str
+    criteria: str
+    pass_threshold: float = 0.8
+    max_attempts: int = 3
+
+
 class AgentRunRequest(BaseModel):
     goal: str
     scopes: list[str] = Field(default_factory=lambda: ["read"])

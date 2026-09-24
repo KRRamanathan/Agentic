@@ -25,7 +25,17 @@ from fake_llm import FakeLLM  # noqa: E402
 
 logger = logging.getLogger("agentic")
 
-_PLACEHOLDERS = {"", "sk-ant-xxx", "your-key-here", "changeme"}
+_PLACEHOLDERS = {
+    "",
+    "sk-ant-xxx",
+    "your-key-here",
+    "changeme",
+    "unset",
+    "UNSET",
+    "placeholder",
+    "none",
+    "null",
+}
 
 AUTH_MESSAGE = (
     "The model provider rejected the API key. "
