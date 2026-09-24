@@ -16,6 +16,7 @@ from anthropic import RateLimitError as AnthropicRateLimitError
 
 from real_llm import RealLLM
 from src.gemini_llm import GeminiAPIError, GeminiAuthError, GeminiLLM, GeminiRateLimitError
+from src.groq_llm import GroqLLM
 
 _ROOT = Path(__file__).resolve().parents[1]
 _TESTS = _ROOT / "tests"
@@ -221,6 +222,9 @@ def get_llm() -> tuple[Any, str]:
     if key.startswith("sk-ant-"):
         logger.info("LLM mode: real (anthropic)")
         return RealLLM(key), "real"
+    if key.startswith("gsk_"):
+        logger.info("LLM mode: real (groq)")
+        return GroqLLM(key), "real"
     logger.info("LLM mode: real (gemini)")
     return GeminiLLM(key), "real"
 
