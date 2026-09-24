@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field, ValidationError, create_model
 
@@ -25,6 +25,7 @@ from observability import InstrumentedLLM, Tracer
 from react_loop import ReActAgent
 from real_llm import LLMUnavailable
 from self_eval import SelfEvalAgent
+from src.agent_pipeline_factory import build_pipeline
 from src.llm_factory import (
     AUTH_MESSAGE,
     RATE_MESSAGE,
@@ -232,11 +233,16 @@ class DebateRequest(BaseModel):
     n_proposers: int = Field(default=3, ge=1, le=5)
 
 
-class SelfEvalRequest(BaseModel):
-    task: str
-    criteria: str
-    pass_threshold: float = 0.8
-    max_attempts: int = 3
+class AgentRunRequest(BaseModel):
+    goal: str
+    scopes: list[str] = Field(default_factory=lambda: ["read"])
+    force_model: str | None = None
+
+
+class AgentResumeRequest(BaseModel):
+    ticket: str
+    approved: bool
+    human_note: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +272,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
+    allow_origin_regex=r"https://.*\.run\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -629,3 +636,66 @@ def observability_report() -> dict[str, Any]:
     report = runtime.llm.report()
     report["spans"] = runtime.tracer.spans[-50:]
     return report
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _agent_sse_events(iterator):
+    try:
+        for ev in iterator:
+            yield _sse(ev)
+    except AnthropicAuthenticationError:
+        yield _sse({"stage": "provider", "status": "unavailable", "message": AUTH_MESSAGE})
+    except AnthropicRateLimitError:
+        yield _sse({"stage": "provider", "status": "unavailable", "message": RATE_MESSAGE})
+    except AnthropicAPIError as exc:
+        msg = getattr(exc, "message", None) or str(exc)
+        yield _sse({
+            "stage": "provider",
+            "status": "unavailable",
+            "message": f"The model provider returned an error: {msg}",
+        })
+    except LLMUnavailable:
+        yield _sse({"stage": "provider", "status": "unavailable", "message": AUTH_MESSAGE})
+    except Exception as exc:
+        yield _sse({"stage": "pipeline", "status": "error", "message": str(exc)})
+
+
+@app.post("/agent/run")
+async def agent_run(body: AgentRunRequest):
+    pipeline = build_pipeline()
+    pipeline._force_model = body.force_model
+
+    def gen():
+        yield from _agent_sse_events(pipeline.run_stream(body.goal, set(body.scopes)))
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/agent/resume")
+async def agent_resume(body: AgentResumeRequest):
+    pipeline = build_pipeline()
+
+    def gen():
+        yield from _agent_sse_events(
+            pipeline.resume_stream(body.ticket, body.approved, body.human_note)
+        )
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/agent/config")
+async def agent_config():
+    client, mode = get_llm()
+    model = "fake-llm" if mode == "fake" else getattr(client, "name", "claude-sonnet-4-6")
+    return {"llm_mode": mode, "model": model}

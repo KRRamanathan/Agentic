@@ -1,0 +1,88 @@
+# Agent UI + backend only. Does not deploy agentic-frontend (toolkit).
+substitutions:
+  _REGION: us-central1
+  _AR_REPO: agentic
+  _BACKEND_URL: https://agentic-backend-luktzdc5wa-uc.a.run.app
+  _AGENT_SERVICE: agentic-agent
+  _BACKEND_SERVICE: agentic-backend
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 2400s
+
+steps:
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - backend/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$BUILD_ID
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:latest
+      - .
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend
+
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_BACKEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$BUILD_ID
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8000
+      - --timeout=300
+      - --memory=1Gi
+      - --cpu=1
+      - --set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest
+      - --set-env-vars=ANTHROPIC_MODEL=claude-sonnet-4-6
+
+  - id: build-agent-ui
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - frontend/Dockerfile.agent
+      - --build-arg
+      - VITE_API_URL=${_BACKEND_URL}
+      - --build-arg
+      - VITE_DEFAULT_ROUTE=/agent
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/agent:$BUILD_ID
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/agent:latest
+      - web
+
+  - id: push-agent-ui
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/agent
+
+  - id: deploy-agent-ui
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_AGENT_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/agent:$BUILD_ID
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=3000
+      - --memory=256Mi
+      - --cpu=1

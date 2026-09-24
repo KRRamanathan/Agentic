@@ -1,0 +1,18 @@
+FROM node:20-slim AS build
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+ARG VITE_API_URL=http://localhost:8000
+ARG VITE_DEFAULT_ROUTE=/agent
+ENV NEXT_PUBLIC_API_URL=$VITE_API_URL
+ENV NEXT_PUBLIC_DEFAULT_ROUTE=$VITE_DEFAULT_ROUTE
+RUN npm run build
+
+FROM nginx:1.27-alpine
+
+COPY --from=build /app/out /usr/share/nginx/html
+COPY nginx.agent.conf /etc/nginx/conf.d/default.conf
+EXPOSE 3000
+CMD ["nginx", "-g", "daemon off;"]

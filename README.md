@@ -1,12 +1,12 @@
 # Agentic
 
-Ten Python agent modules behind a FastAPI API and a Next.js playground, deployed as two Cloud Run services.
+Ten Python agent modules behind a FastAPI API, a toolkit playground, and a composed agent UI.
 
 Live (GCP project `agentic-509610`):
 
-- UI: https://agentic-frontend-luktzdc5wa-uc.a.run.app
-- API / Swagger: https://agentic-backend-luktzdc5wa-uc.a.run.app/docs
-- Health: https://agentic-backend-luktzdc5wa-uc.a.run.app/health
+- Toolkit: https://agentic-frontend-luktzdc5wa-uc.a.run.app
+- Agent: https://agentic-agent-<revision>.run.app
+- API: https://agentic-backend-luktzdc5wa-uc.a.run.app/docs
 
 If `ANTHROPIC_API_KEY` is unset or a known placeholder, the API runs in **demo mode** (`FakeLLM`). If a key is present but rejected, playgrounds return HTTP 200 with `{ "status": "unavailable" }` instead of a raw 401.
 
