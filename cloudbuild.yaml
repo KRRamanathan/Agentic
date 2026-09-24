@@ -1,0 +1,106 @@
+substitutions:
+  _REGION: us-central1
+  _AR_REPO: agentic
+  _BACKEND_SERVICE: agentic-backend
+  _FRONTEND_SERVICE: agentic-frontend
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 2400s
+
+steps:
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - backend/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$BUILD_ID
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:latest
+      - .
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend
+
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_BACKEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$BUILD_ID
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8000
+      - --timeout=300
+      - --memory=1Gi
+      - --cpu=1
+      - --set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest
+      - --set-env-vars=ANTHROPIC_MODEL=claude-sonnet-4-6
+
+  - id: write-backend-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        gcloud run services describe ${_BACKEND_SERVICE} --region=${_REGION} --format='value(status.url)' > /workspace/backend_url.txt
+        echo "BACKEND_URL=$$(cat /workspace/backend_url.txt)"
+
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        BACKEND_URL=$$(cat /workspace/backend_url.txt)
+        docker build -f frontend/Dockerfile \
+          --build-arg VITE_API_URL="$$BACKEND_URL" \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:$BUILD_ID \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:latest \
+          web
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend
+
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_FRONTEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:$BUILD_ID
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=3000
+      - --memory=256Mi
+      - --cpu=1
+
+  - id: point-backend-cors-at-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        FRONTEND_URL=$$(gcloud run services describe ${_FRONTEND_SERVICE} --region=${_REGION} --format='value(status.url)')
+        gcloud run services update ${_BACKEND_SERVICE} \
+          --region=${_REGION} \
+          --update-env-vars="ANTHROPIC_MODEL=claude-sonnet-4-6,CORS_ORIGINS=$${FRONTEND_URL}"
