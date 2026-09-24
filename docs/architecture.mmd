@@ -1,0 +1,55 @@
+flowchart LR
+  subgraph Client
+    Browser[Browser]
+  end
+
+  subgraph Frontend["Cloud Run: agentic-frontend"]
+    Next[Next.js static UI]
+  end
+
+  subgraph Backend["Cloud Run: agentic-backend"]
+    API[FastAPI main.py]
+    Factory[src/llm_factory.py]
+    Obs[InstrumentedLLM + Tracer]
+
+    subgraph Reliability
+      SO[structured_output]
+      RA[react_loop]
+    end
+
+    subgraph Execution
+      OR[tool_orchestrator]
+      EV[event_automation]
+    end
+
+    subgraph Intelligence
+      MEM[memory_agent]
+      DB[debate_system]
+      SE[self_eval]
+    end
+
+    subgraph Governance
+      HITL[hitl_approval]
+      CR[cost_router]
+    end
+  end
+
+  subgraph Provider
+    Claude[Claude API]
+    Fake[FakeLLM]
+  end
+
+  Browser --> Next --> API
+  API --> Factory
+  Factory -->|valid key| Claude
+  Factory -->|no / placeholder key| Fake
+  SO --> Obs
+  RA --> Obs
+  MEM --> Obs
+  DB --> Obs
+  SE --> Obs
+  HITL --> Obs
+  CR --> Obs
+  Obs --> Factory
+  OR -.->|no LLM| API
+  EV -.->|no LLM| API

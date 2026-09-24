@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 640" font-family="Segoe UI, system-ui, sans-serif">
+  <rect width="1080" height="640" fill="#FFF8F0"/>
+  <text x="40" y="40" font-size="20" fill="#3F2A22">Agentic  client ’ frontend ’ backend ’ Claude / FakeLLM</text>
+
+  <rect x="40" y="80" width="140" height="70" rx="10" fill="#fff" stroke="#E8A87C"/>
+  <text x="110" y="122" text-anchor="middle" font-size="14" fill="#3F2A22">Browser</text>
+
+  <rect x="230" y="80" width="180" height="70" rx="10" fill="#fff" stroke="#E8A87C"/>
+  <text x="320" y="114" text-anchor="middle" font-size="14" fill="#3F2A22">Frontend</text>
+  <text x="320" y="134" text-anchor="middle" font-size="11" fill="#6B3F2A">Cloud Run :3000</text>
+
+  <rect x="460" y="70" width="360" height="500" rx="12" fill="#FFF1E4" stroke="#F5C9A8"/>
+  <text x="640" y="98" text-anchor="middle" font-size="14" fill="#3F2A22">Backend FastAPI + InstrumentedLLM</text>
+
+  <rect x="480" y="120" width="150" height="50" rx="8" fill="#fff" stroke="#E08A4F"/>
+  <text x="555" y="150" text-anchor="middle" font-size="12" fill="#3F2A22">llm_factory</text>
+
+  <rect x="650" y="120" width="150" height="50" rx="8" fill="#fff" stroke="#E08A4F"/>
+  <text x="725" y="150" text-anchor="middle" font-size="12" fill="#3F2A22">Observability wrap</text>
+
+  <rect x="480" y="200" width="150" height="80" rx="8" fill="#fff" stroke="#F5C9A8"/>
+  <text x="555" y="228" text-anchor="middle" font-size="11" fill="#6B3F2A">Reliability</text>
+  <text x="555" y="248" text-anchor="middle" font-size="12" fill="#3F2A22">structured_output</text>
+  <text x="555" y="266" text-anchor="middle" font-size="12" fill="#3F2A22">react_loop</text>
+
+  <rect x="650" y="200" width="150" height="80" rx="8" fill="#fff" stroke="#F5C9A8"/>
+  <text x="725" y="228" text-anchor="middle" font-size="11" fill="#6B3F2A">Execution</text>
+  <text x="725" y="248" text-anchor="middle" font-size="12" fill="#3F2A22">tool_orchestrator</text>
+  <text x="725" y="266" text-anchor="middle" font-size="12" fill="#3F2A22">event_automation</text>
+
+  <rect x="480" y="300" width="150" height="96" rx="8" fill="#fff" stroke="#F5C9A8"/>
+  <text x="555" y="328" text-anchor="middle" font-size="11" fill="#6B3F2A">Intelligence</text>
+  <text x="555" y="348" text-anchor="middle" font-size="12" fill="#3F2A22">memory_agent</text>
+  <text x="555" y="366" text-anchor="middle" font-size="12" fill="#3F2A22">debate_system</text>
+  <text x="555" y="384" text-anchor="middle" font-size="12" fill="#3F2A22">self_eval</text>
+
+  <rect x="650" y="300" width="150" height="96" rx="8" fill="#fff" stroke="#F5C9A8"/>
+  <text x="725" y="328" text-anchor="middle" font-size="11" fill="#6B3F2A">Governance</text>
+  <text x="725" y="348" text-anchor="middle" font-size="12" fill="#3F2A22">hitl_approval</text>
+  <text x="725" y="366" text-anchor="middle" font-size="12" fill="#3F2A22">cost_router</text>
+
+  <rect x="520" y="430" width="240" height="56" rx="8" fill="#fff" stroke="#E08A4F"/>
+  <text x="640" y="454" text-anchor="middle" font-size="12" fill="#3F2A22">LLM-touching modules go through</text>
+  <text x="640" y="472" text-anchor="middle" font-size="12" fill="#3F2A22">InstrumentedLLM ’ get_llm()</text>
+
+  <rect x="860" y="200" width="180" height="70" rx="10" fill="#fff" stroke="#E8A87C"/>
+  <text x="950" y="232" text-anchor="middle" font-size="14" fill="#3F2A22">Claude API</text>
+  <text x="950" y="252" text-anchor="middle" font-size="11" fill="#6B3F2A">mode = real</text>
+
+  <rect x="860" y="300" width="180" height="70" rx="10" fill="#fff" stroke="#A8A29E"/>
+  <text x="950" y="332" text-anchor="middle" font-size="14" fill="#3F2A22">FakeLLM</text>
+  <text x="950" y="352" text-anchor="middle" font-size="11" fill="#6B3F2A">mode = fake / demo</text>
+
+  <line x1="180" y1="115" x2="230" y2="115" stroke="#E08A4F" marker-end="url(#arrow)"/>
+  <line x1="410" y1="115" x2="460" y2="115" stroke="#E08A4F"/>
+  <line x1="820" y1="145" x2="860" y2="235" stroke="#E08A4F"/>
+  <line x1="820" y1="145" x2="860" y2="335" stroke="#A8A29E"/>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#E08A4F"/>
+    </marker>
+  </defs>
+</svg>
