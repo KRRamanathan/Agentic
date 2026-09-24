@@ -5,7 +5,7 @@ Ten Python agent modules behind a FastAPI API, a toolkit playground, and a compo
 Live (GCP project `agentic-509610`):
 
 - Toolkit: https://agentic-frontend-luktzdc5wa-uc.a.run.app
-- Agent: https://agentic-agent-<revision>.run.app
+- Agent: https://agentic-agent-luktzdc5wa-uc.a.run.app
 - API: https://agentic-backend-luktzdc5wa-uc.a.run.app/docs
 
 If `ANTHROPIC_API_KEY` is unset or a known placeholder, the API runs in **demo mode** (`FakeLLM`). If a key is present but rejected, playgrounds return HTTP 200 with `{ "status": "unavailable" }` instead of a raw 401.

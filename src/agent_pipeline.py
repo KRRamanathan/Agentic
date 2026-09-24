@@ -11,7 +11,30 @@ from pydantic import BaseModel, Field
 
 from debate_system import Debate
 from self_eval import SelfEvalAgent
+from src.llm_factory import (
+    AUTH_MESSAGE,
+    RATE_MESSAGE,
+    AnthropicAPIError,
+    AnthropicAuthenticationError,
+    AnthropicRateLimitError,
+)
 from structured_output import StructuredAgent
+
+
+def _provider_event(stage: str, exc: BaseException) -> dict:
+    if isinstance(exc, AnthropicAuthenticationError):
+        return {"stage": stage, "status": "unavailable", "message": AUTH_MESSAGE}
+    if isinstance(exc, AnthropicRateLimitError):
+        return {"stage": stage, "status": "unavailable", "message": RATE_MESSAGE}
+    if isinstance(exc, AnthropicAPIError):
+        msg = getattr(exc, "message", None) or "provider error"
+        if "x-api-key" in str(msg).lower() or "api key" in str(msg).lower() or "authentication" in str(msg).lower():
+            return {"stage": stage, "status": "unavailable", "message": AUTH_MESSAGE}
+        return {"stage": stage, "status": "unavailable", "message": f"The model provider returned an error: {msg}"}
+    text = str(exc)
+    if "x-api-key" in text.lower() or "authentication_error" in text.lower():
+        return {"stage": stage, "status": "unavailable", "message": AUTH_MESSAGE}
+    return {"stage": stage, "status": "error", "message": text}
 
 
 def _round(value: Any) -> Any:
@@ -75,7 +98,7 @@ class AgentPipeline:
             })
             stage_count += 1
         except Exception as exc:
-            yield _round({"stage": "memory_recall", "status": "error", "message": str(exc)})
+            yield _round(_provider_event("memory_recall", exc))
             return
 
         try:
@@ -103,7 +126,7 @@ class AgentPipeline:
             })
             stage_count += 1
         except Exception as exc:
-            yield _round({"stage": "cost_route", "status": "error", "message": str(exc)})
+            yield _round(_provider_event("cost_route", exc))
             return
 
         try:
@@ -113,11 +136,11 @@ class AgentPipeline:
                     if maybe_answer is not None:
                         answer = maybe_answer
                     yield _round(event)
-                    if event.get("status") == "error":
+                    if event.get("status") == "error" or event.get("status") == "unavailable":
                         return
                 stage_count += 1
         except Exception as exc:
-            yield _round({"stage": "react_loop", "status": "error", "message": str(exc)})
+            yield _round(_provider_event("react_loop", exc))
             return
 
         pause, reason, action = self._should_pause(goal, answer)
@@ -249,7 +272,11 @@ class AgentPipeline:
         for i in range(max_iterations):
             attempts = i + 1
             prompt = self._react_prompt(goal, trace)
-            raw = self.llm.complete(prompt)
+            try:
+                raw = self.llm.complete(prompt)
+            except Exception as exc:
+                yield (_round(_provider_event("react_loop", exc)), None, None, attempts)
+                return
             try:
                 decision = json.loads(raw)
             except json.JSONDecodeError:
