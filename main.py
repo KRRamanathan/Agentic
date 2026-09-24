@@ -704,5 +704,13 @@ async def agent_resume(body: AgentResumeRequest):
 @app.get("/agent/config")
 async def agent_config():
     client, mode = get_llm()
-    model = "fake-llm" if mode == "fake" else getattr(client, "name", "claude-sonnet-4-6")
+    if mode == "fake":
+        model = "fake-llm"
+    else:
+        model = (
+            os.getenv("ANTHROPIC_MODEL")
+            or getattr(client, "model", None)
+            or getattr(client, "name", None)
+            or "claude-sonnet-4-6"
+        )
     return {"llm_mode": mode, "model": model}

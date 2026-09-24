@@ -61,8 +61,9 @@ def _display_model(router_name: str) -> str:
         return "fake-llm"
     return (
         os.getenv("ANTHROPIC_MODEL")
+        or getattr(client, "model", None)
         or getattr(client, "name", None)
-        or router_name
+        or "claude-sonnet-4-6"
     )
 
 
@@ -96,7 +97,8 @@ class AgentPipeline:
         protected_actions: frozenset = frozenset({"delete", "send_email", "refund"}),
     ) -> None:
         self.llm = llm
-        self.tracer = tracer
+        self.tracer = getattr(llm, "tracer", None) or tracer
+        self.tracer.clock = time.monotonic
         self.memory = memory
         self.router = router
         self.hitl = hitl
@@ -260,8 +262,17 @@ class AgentPipeline:
             return
 
         total_cost = float(getattr(self.llm, "total_cost", 0.0) or 0.0) - cost0
-        spans = list(getattr(self.tracer, "spans", []))
-        yield _round({
+        spans = []
+        for raw in list(getattr(self.tracer, "spans", [])):
+            seconds = float(raw.get("duration") or 0.0)
+            spans.append({
+                "name": raw.get("name"),
+                "duration": round(seconds, 6),
+                "duration_ms": round(seconds * 1000, 3),
+                "parent": raw.get("parent"),
+                "model": model_name,
+            })
+        event = _round({
             "stage": "done",
             "status": "ok",
             "answer": final_answer,
@@ -270,8 +281,9 @@ class AgentPipeline:
             "stages": stage_count + 1,
             "model": model_name,
             "attempts": attempts,
-            "spans": spans,
         })
+        event["spans"] = spans
+        yield event
 
     def _should_pause(self, goal: str, answer: str) -> tuple[bool, str, str]:
         lowered = f"{goal} {answer}".lower()

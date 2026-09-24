@@ -25,7 +25,39 @@ type AgentEvent = {
   attempts?: number;
   message?: string;
   spans?: unknown[];
+  iterations?: AgentEvent[];
 };
+
+function groupTimeline(events: AgentEvent[]): AgentEvent[] {
+  const rows: AgentEvent[] = [];
+  for (const ev of events) {
+    if (ev.stage === "react_loop") {
+      const prev = rows[rows.length - 1];
+      if (prev?.stage === "react_loop") {
+        prev.iterations = [...(prev.iterations || []), ev];
+        if (ev.status === "error" || ev.status === "unavailable") {
+          prev.status = ev.status;
+        } else {
+          prev.status = "running";
+        }
+        continue;
+      }
+      rows.push({
+        stage: "react_loop",
+        status:
+          ev.status === "error" || ev.status === "unavailable" ? ev.status : "running",
+        iterations: [ev],
+      });
+      continue;
+    }
+    const prev = rows[rows.length - 1];
+    if (prev?.stage === "react_loop" && prev.status === "running") {
+      prev.status = "ok";
+    }
+    rows.push({ ...ev });
+  }
+  return rows;
+}
 
 function icon(status?: string, stage?: string) {
   if (stage === "hitl_pause" || status === "pending") return "⏸";
@@ -83,12 +115,7 @@ export function AgentView() {
   const [showRaw, setShowRaw] = useState(false);
   const done = events.find((e) => e.stage === "done");
   const pause = [...events].reverse().find((e) => e.stage === "hitl_pause" && e.status === "pending");
-  const terminal = events.some(
-    (e) => e.stage === "done" || e.status === "error" || e.status === "unavailable",
-  );
-  const timeline = terminal
-    ? events.map((e) => (e.status === "running" ? { ...e, status: "ok" } : e))
-    : events;
+  const timeline = groupTimeline(events);
 
   useEffect(() => {
     void fetch(`${API_URL}/agent/config`)
@@ -255,6 +282,9 @@ export function AgentView() {
                   {ev.stage}
                 </span>
                 <span className="font-mono text-xs text-peach-800/60">
+                  {ev.stage === "react_loop" && ev.iterations
+                    ? `${ev.iterations.length} iteration${ev.iterations.length === 1 ? "" : "s"}`
+                    : ""}
                   {typeof ev.duration_ms === "number" ? `${ev.duration_ms.toFixed(3)} ms` : ""}
                   {ev.payload && typeof ev.payload.model === "string" ? ` → model: ${ev.payload.model}` : ""}
                   {ev.stage === "hitl_pause" && ev.ticket ? ` ticket: ${ev.ticket}` : ""}
@@ -263,7 +293,39 @@ export function AgentView() {
               {open[i] ? (
                 <div className="space-y-1 border-t border-peach-100 px-4 py-3 text-sm text-peach-800">
                   {ev.status ? <p>Status: {ev.status}</p> : null}
-                  {typeof ev.iteration === "number" ? <p>Iteration: {ev.iteration}</p> : null}
+                  {ev.iterations?.length ? (
+                    <ol className="space-y-3">
+                      {ev.iterations.map((it, idx) => {
+                        const last = idx === ev.iterations!.length - 1;
+                        const itStatus =
+                          ev.status === "running" && last
+                            ? "running"
+                            : it.status === "running"
+                              ? "ok"
+                              : it.status;
+                        return (
+                          <li key={idx} className="rounded-lg bg-peach-50 px-3 py-2">
+                            <p className="font-mono text-xs">
+                              <span className={iconClass(itStatus, it.stage)}>{icon(itStatus, it.stage)}</span>{" "}
+                              iteration {it.iteration ?? idx + 1}
+                            </p>
+                            {it.thought ? <p>Thought: {it.thought}</p> : null}
+                            {it.tool ? <p>Tool: {it.tool}</p> : null}
+                            {it.args ? (
+                              <p>
+                                Args:{" "}
+                                {Object.entries(it.args)
+                                  .map(([k, v]) => `${k}=${String(v)}`)
+                                  .join(", ") || "none"}
+                              </p>
+                            ) : null}
+                            {it.observation ? <p>Observation: {it.observation}</p> : null}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  ) : null}
+                  {typeof ev.iteration === "number" && !ev.iterations ? <p>Iteration: {ev.iteration}</p> : null}
                   {ev.thought ? <p>Thought: {ev.thought}</p> : null}
                   {ev.tool ? <p>Tool: {ev.tool}</p> : null}
                   {ev.args ? (
@@ -328,10 +390,11 @@ export function AgentView() {
           {showTrace && Array.isArray(done.spans) ? (
             <ul className="font-mono text-xs">
               {done.spans.map((span, i) => {
-                const s = span as { name?: string; duration?: number };
+                const s = span as { name?: string; duration?: number; duration_ms?: number; model?: string };
+                const ms = typeof s.duration_ms === "number" ? s.duration_ms : Number(s.duration ?? 0) * 1000;
                 return (
                   <li key={i}>
-                    {s.name} {Number(s.duration ?? 0).toFixed(3)} s
+                    {s.name} {ms.toFixed(3)} ms{s.model ? ` · model ${s.model}` : ""}
                   </li>
                 );
               })}
