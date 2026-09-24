@@ -105,7 +105,57 @@ def _scripted_complete(prompt: str) -> str:
             data = {"name": "Ada Lovelace", "age": 36}
         return json.dumps(data)
 
-    if "available tools:" in lower or '"final"' in lower:
+    if (
+        "available tools:" in lower
+        and '"extract"' in lower
+        and '"debate"' in lower
+        and '"self_eval"' in lower
+    ):
+        goal = ""
+        for line in prompt.splitlines():
+            if line.lower().startswith("goal:"):
+                goal = line.split(":", 1)[1].strip()
+                break
+        tail = prompt.split("Trace so far:", 1)[-1].lower()
+        if re.search(r"action:\s*(extract|debate|self_eval)", tail):
+            return json.dumps({
+                "thought": "The tool result is enough to finish.",
+                "final": "Scripted ReAct final answer.",
+            })
+        g = goal.lower()
+        words = [w for w in goal.replace(",", " ").split() if w]
+        trivial = len(words) <= 4 and not any(
+            v in g for v in (
+                "write", "plan", "design", "compare", "extract", "analyze",
+            )
+        )
+        if trivial:
+            return json.dumps({
+                "thought": "Trivial one-liner; no tool needed.",
+                "final": "Scripted ReAct final answer.",
+            })
+        if any(tok in g for tok in ("extract", "invoice", "total from")):
+            return json.dumps({
+                "thought": "The goal is pulling structured fields from provided text.",
+                "action": "extract",
+                "args": {"text": goal},
+            })
+        if any(tok in g for tok in ("better", "versus", " vs ", "compare")):
+            return json.dumps({
+                "thought": "This question has multiple defensible answers.",
+                "action": "debate",
+                "args": {"question": goal},
+            })
+        return json.dumps({
+            "thought": "Open-ended creative or planning task; refine with self_eval.",
+            "action": "self_eval",
+            "args": {
+                "task": goal,
+                "criteria": "Accurate, complete, and useful for the stated goal.",
+            },
+        })
+
+    if "available tools:" in lower:
         return json.dumps({
             "thought": "The goal can be answered directly in demo mode.",
             "final": "Scripted ReAct final answer.",

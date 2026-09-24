@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
-from collections.abc import Iterator
-from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +16,7 @@ from src.llm_factory import (
     AnthropicAPIError,
     AnthropicAuthenticationError,
     AnthropicRateLimitError,
+    get_llm,
 )
 from structured_output import StructuredAgent
 
@@ -35,6 +35,35 @@ def _provider_event(stage: str, exc: BaseException) -> dict:
     if "x-api-key" in text.lower() or "authentication_error" in text.lower():
         return {"stage": stage, "status": "unavailable", "message": AUTH_MESSAGE}
     return {"stage": stage, "status": "error", "message": text}
+
+
+_TASK_VERBS = (
+    "write", "plan", "design", "compare", "extract", "analyze",
+    "construct", "architect", "evaluate", "debate",
+)
+
+
+def _requires_tool(goal: str) -> bool:
+    words = [w for w in goal.replace(",", " ").split() if w]
+    lowered = goal.lower()
+    if len(words) > 10:
+        return True
+    if any(verb in lowered for verb in _TASK_VERBS):
+        return True
+    if any(token in lowered for token in ("better", "versus", " vs ", " or ")):
+        return True
+    return False
+
+
+def _display_model(router_name: str) -> str:
+    client, mode = get_llm()
+    if mode == "fake":
+        return "fake-llm"
+    return (
+        os.getenv("ANTHROPIC_MODEL")
+        or getattr(client, "name", None)
+        or router_name
+    )
 
 
 def _round(value: Any) -> Any:
@@ -118,6 +147,7 @@ class AgentPipeline:
                     model_name = self.router.route(goal)
                 cfg = self.router.models[model_name]
                 cost_per_call = cfg.cost_per_call
+                model_name = _display_model(model_name)
             yield _round({
                 "stage": "cost_route",
                 "status": "ok",
@@ -268,9 +298,29 @@ class AgentPipeline:
         answer = ""
         last_action = None
         attempts = 0
+        tool_used = False
 
         for i in range(max_iterations):
             attempts = i + 1
+            last_iter = i == max_iterations - 1
+            if last_iter and not tool_used and _requires_tool(goal):
+                action, args, thought, obs, answer = self._force_self_eval(goal)
+                last_action = action
+                yield (
+                    {
+                        "stage": "react_loop",
+                        "status": "running",
+                        "iteration": i + 1,
+                        "thought": thought,
+                        "tool": action,
+                        "args": args,
+                        "observation": obs,
+                    },
+                    answer,
+                    action,
+                    attempts,
+                )
+                return
             prompt = self._react_prompt(goal, trace)
             try:
                 raw = self.llm.complete(prompt)
@@ -306,6 +356,16 @@ class AgentPipeline:
 
             thought = decision.get("thought", "")
             if "final" in decision:
+                if (not tool_used) and _requires_tool(goal) and not last_iter:
+                    trace.append({
+                        "thought": thought,
+                        "action": None,
+                        "observation": (
+                            "ERROR: this goal is not a trivial one-liner. "
+                            "Call extract, debate, or self_eval before finishing."
+                        ),
+                    })
+                    continue
                 answer = str(decision.get("final") or "")
                 yield (
                     {
@@ -333,6 +393,7 @@ class AgentPipeline:
             else:
                 try:
                     result = self.tools[action](**args)
+                    tool_used = True
                     obs = result if isinstance(result, str) else json.dumps(result, default=str)
                     if isinstance(result, dict) and "answer" in result:
                         answer = str(result["answer"])
@@ -363,10 +424,44 @@ class AgentPipeline:
                 attempts,
             )
 
+        if not tool_used and _requires_tool(goal):
+            action, args, thought, obs, answer = self._force_self_eval(goal)
+            yield (
+                {
+                    "stage": "react_loop",
+                    "status": "running",
+                    "iteration": max_iterations,
+                    "thought": thought,
+                    "tool": action,
+                    "args": args,
+                    "observation": obs,
+                },
+                answer,
+                action,
+                attempts,
+            )
+            return
+
         if not answer:
             answer = " | ".join(
                 str(s.get("observation")) for s in trace if s.get("observation")
             ) or "no observations"
+
+    def _force_self_eval(self, goal: str):
+        thought = "No tool was selected in time; running self_eval to produce a refined answer."
+        args = {
+            "task": goal,
+            "criteria": "Accurate, complete, and useful for the stated goal.",
+        }
+        result = self.tools["self_eval"](**args)
+        obs = result if isinstance(result, str) else json.dumps(result, default=str)
+        if isinstance(result, dict) and result.get("output"):
+            answer = str(result["output"])
+        elif isinstance(result, dict) and result.get("answer"):
+            answer = str(result["answer"])
+        else:
+            answer = obs
+        return "self_eval", args, thought, obs, answer
 
     def _react_prompt(self, goal: str, trace: list[dict]) -> str:
         trace_text = "\n".join(
@@ -374,13 +469,34 @@ class AgentPipeline:
             f"Observation: {s.get('observation')}"
             for s in trace
         ) or "(empty)"
+        must_tool = (
+            "This goal is NOT a trivial one-liner. You MUST call a tool on this "
+            "iteration. Do not return \"final\" yet."
+            if _requires_tool(goal) and not any(s.get("action") for s in trace)
+            else ""
+        )
         return (
             f"Goal: {goal}\n\n"
-            f"Available tools: {sorted(self.tools)}\n\n"
-            "Use extract when the goal is to pull structured fields (totals, names) from text.\n"
-            "Use debate when the goal is a comparison or judgment between options.\n"
-            "Use self_eval when the goal is to write or refine a definition or short answer.\n"
-            "Otherwise finish with a final answer.\n\n"
+            "Available tools:\n"
+            '- "extract"   — pull structured fields from text. '
+            'args: {"text": "<source text>"}\n'
+            '- "debate"    — get multiple perspectives and synthesize. '
+            'args: {"question": "<question>"}\n'
+            '- "self_eval" — generate, judge, refine iteratively. '
+            'args: {"task": "<task>", "criteria": "<quality bar>"}\n\n'
+            "Routing rules:\n"
+            "- Use extract when the goal is pulling data from provided text "
+            "(invoices, totals, names).\n"
+            "- Use debate for questions with multiple defensible answers "
+            "(comparisons, trade-offs, \"better than\").\n"
+            "- Use self_eval for open-ended creative or planning tasks "
+            "(write, design, architecture, definitions).\n"
+            "- Forbid answering directly unless the goal is a trivial one-liner "
+            '(for example "say hello").\n'
+            "- If the goal is longer than about 10 words or contains a task verb "
+            "(write, plan, design, compare, extract, analyze), you MUST call a "
+            "tool on the first iteration.\n"
+            f"{must_tool}\n\n"
             f"Trace so far:\n{trace_text}\n\n"
             "Reply with JSON only.\n"
             '  • To call a tool: {"thought": "...", "action": "<tool>", "args": {...}}\n'

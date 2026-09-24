@@ -83,6 +83,12 @@ export function AgentView() {
   const [showRaw, setShowRaw] = useState(false);
   const done = events.find((e) => e.stage === "done");
   const pause = [...events].reverse().find((e) => e.stage === "hitl_pause" && e.status === "pending");
+  const terminal = events.some(
+    (e) => e.stage === "done" || e.status === "error" || e.status === "unavailable",
+  );
+  const timeline = terminal
+    ? events.map((e) => (e.status === "running" ? { ...e, status: "ok" } : e))
+    : events;
 
   useEffect(() => {
     void fetch(`${API_URL}/agent/config`)
@@ -237,7 +243,7 @@ export function AgentView() {
           </p>
         ) : null}
         <ol className="space-y-2">
-          {events.map((ev, i) => (
+          {timeline.map((ev, i) => (
             <li key={`${ev.stage}-${i}`} className="rounded-xl border border-peach-200 bg-white">
               <button
                 type="button"
