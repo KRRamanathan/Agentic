@@ -7,11 +7,8 @@ import re
 import httpx
 
 DEFAULT_MODEL = "gemini-3.6-flash"
-_FALLBACK_MODELS = (
-    "gemini-3.6-flash",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-)
+_RETIRED = ("gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro")
+_REDIRECT = re.compile(r"use models/([a-zA-Z0-9._-]+)", re.I)
 
 
 class GeminiAuthError(Exception):
@@ -32,12 +29,16 @@ def _model_name(explicit: str | None) -> str:
     raw = (
         explicit
         or os.getenv("GEMINI_MODEL")
-        or os.getenv("ANTHROPIC_MODEL")
         or DEFAULT_MODEL
     )
     lowered = raw.lower()
-    if lowered.startswith("claude") or "sonnet" in lowered or "haiku" in lowered:
-        return os.getenv("GEMINI_MODEL") or DEFAULT_MODEL
+    if (
+        lowered.startswith("claude")
+        or "sonnet" in lowered
+        or "haiku" in lowered
+        or any(tag in lowered for tag in _RETIRED)
+    ):
+        return DEFAULT_MODEL
     return raw
 
 
@@ -66,12 +67,14 @@ class GeminiLLM:
         self.max_tokens = max_tokens
 
     def complete(self, prompt: str) -> str:
+        queue = [self.model]
+        tried: set[str] = set()
         last_error: Exception | None = None
-        tried = []
-        for model in (self.model, *[m for m in _FALLBACK_MODELS if m != self.model]):
-            if model in tried:
+        while queue:
+            model = queue.pop(0)
+            if model in tried or any(tag in model for tag in _RETIRED):
                 continue
-            tried.append(model)
+            tried.add(model)
             try:
                 text = self._generate(model, prompt)
                 self.model = model
@@ -83,7 +86,13 @@ class GeminiLLM:
                 raise
             except GeminiAPIError as exc:
                 last_error = exc
-                continue
+                redirect = _REDIRECT.search(str(exc))
+                if redirect:
+                    nxt = redirect.group(1)
+                    if nxt not in tried:
+                        queue.insert(0, nxt)
+                    continue
+                raise
         if last_error:
             raise last_error
         raise GeminiAPIError("Gemini returned an empty response")
@@ -93,30 +102,41 @@ class GeminiLLM:
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{model}:generateContent"
         )
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": self.max_tokens,
+                "temperature": 0.2,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        }
         try:
             response = httpx.post(
                 url,
                 params={"key": self.api_key},
                 headers={"x-goog-api-key": self.api_key},
-                json={
-                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "maxOutputTokens": self.max_tokens,
-                        "temperature": 0.2,
-                        "thinkingConfig": {"thinkingBudget": 0},
-                    },
-                },
+                json=body,
                 timeout=120.0,
             )
         except httpx.HTTPError as exc:
             raise GeminiAPIError(str(exc)) from exc
 
-        if response.status_code in {400, 401, 403}:
+        if response.status_code == 400 and "thinkingConfig" in response.text:
+            body["generationConfig"].pop("thinkingConfig", None)
+            response = httpx.post(
+                url,
+                params={"key": self.api_key},
+                headers={"x-goog-api-key": self.api_key},
+                json=body,
+                timeout=120.0,
+            )
+
+        if response.status_code in {401, 403}:
             raise GeminiAuthError(response.text[:300])
         if response.status_code == 429:
             raise GeminiRateLimitError(response.text[:300])
         if response.status_code >= 400:
-            raise GeminiAPIError(f"{response.status_code}: {response.text[:300]}")
+            raise GeminiAPIError(f"{response.status_code}: {response.text[:400]}")
 
         payload = response.json()
         error = payload.get("error")
