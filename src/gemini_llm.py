@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 
 import httpx
 
@@ -66,6 +67,15 @@ class GeminiLLM:
         self.name = self.model
         self.max_tokens = max_tokens
 
+    def _post(self, url: str, body: dict) -> httpx.Response:
+        return httpx.post(
+            url,
+            params={"key": self.api_key},
+            headers={"x-goog-api-key": self.api_key},
+            json=body,
+            timeout=120.0,
+        )
+
     def complete(self, prompt: str) -> str:
         queue = [self.model]
         tried: set[str] = set()
@@ -111,30 +121,29 @@ class GeminiLLM:
             },
         }
         try:
-            response = httpx.post(
-                url,
-                params={"key": self.api_key},
-                headers={"x-goog-api-key": self.api_key},
-                json=body,
-                timeout=120.0,
-            )
+            response = self._post(url, body)
         except httpx.HTTPError as exc:
             raise GeminiAPIError(str(exc)) from exc
 
         if response.status_code == 400 and "thinkingConfig" in response.text:
             body["generationConfig"].pop("thinkingConfig", None)
-            response = httpx.post(
-                url,
-                params={"key": self.api_key},
-                headers={"x-goog-api-key": self.api_key},
-                json=body,
-                timeout=120.0,
-            )
+            response = self._post(url, body)
+
+        if response.status_code == 503:
+            for delay in (2.0, 4.0, 8.0):
+                time.sleep(delay)
+                response = self._post(url, body)
+                if response.status_code != 503:
+                    break
 
         if response.status_code in {401, 403}:
             raise GeminiAuthError(response.text[:300])
         if response.status_code == 429:
             raise GeminiRateLimitError(response.text[:300])
+        if response.status_code == 503:
+            raise GeminiRateLimitError(
+                "The model is busy right now. Wait a few seconds and run again."
+            )
         if response.status_code >= 400:
             raise GeminiAPIError(f"{response.status_code}: {response.text[:400]}")
 
